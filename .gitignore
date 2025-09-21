@@ -1,0 +1,9 @@
+.env
+authorized_user.json
+client_secrets.json
+credentials.json
+service_account.json
+token.pickle
+discord.log
+events.json
+_pycache_
