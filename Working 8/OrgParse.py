@@ -288,8 +288,6 @@ async def update_events_by_id(bot, wks, program, calendar, event_ID, update_args
     headers = df.iloc[0].values
     df.columns = headers
     df = df[1:]
-    
-    # Correctly reference 'Event ID' column
     event_ids = df['Event ID'].tolist()
     ii = None
     for i, eid in enumerate(event_ids):
@@ -332,12 +330,7 @@ async def update_events_by_id(bot, wks, program, calendar, event_ID, update_args
         if "recording" in update_args:
             updates.append({'range': f"K{row}", 'values': [[event0["recording"] or ""]]})
 
-        # Corrected: Write to the correct column (column L or M, depending on spreadsheet header layout)
-        # Based on the user's information that IDs are in column K, we should update that.
-        # However, the original code had this:
-        # updates.append({'range': f"M{row}", 'values': [[event0["id"]]]})
-        # This line is likely the source of the issue. You should remove it or correct it.
-        # Assuming the ID is in column K, the `recording` update should be here.
+        updates.append({'range': f"M{row}", 'values': [[event0["id"]]]})
         
         try:
             ws.batch_update(updates, value_input_option='USER_ENTERED')

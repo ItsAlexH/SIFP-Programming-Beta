@@ -288,8 +288,6 @@ async def update_events_by_id(bot, wks, program, calendar, event_ID, update_args
     headers = df.iloc[0].values
     df.columns = headers
     df = df[1:]
-    
-    # Correctly reference 'Event ID' column
     event_ids = df['Event ID'].tolist()
     ii = None
     for i, eid in enumerate(event_ids):
@@ -310,46 +308,24 @@ async def update_events_by_id(bot, wks, program, calendar, event_ID, update_args
         # human-readable date string (text, not serial)
         date_str = start_time_date.strftime('%A, %B %d')
 
-        # Use batch_update for non-contiguous cells
-        updates = []
-        if "date" in update_args:
-            updates.append({'range': f"A{row}", 'values': [[date_str]]})
-        updates.append({'range': f"B{row}", 'values': [["Updated Details!"]]})
-        if "title" in update_args:
-            updates.append({'range': f"C{row}", 'values': [[event0["title"]]]})
-        if "leaders" in update_args:
-            updates.append({'range': f"D{row}", 'values': [[event0["leaders"]]]})
-        if "start_time" in update_args:
-            updates.append({'range': f"E{row}", 'values': [[start_time_date.strftime('%I:%M %p').lstrip('0')]]})
-        if "end_time" in update_args:
-            updates.append({'range': f"F{row}", 'values': [[end_time_date.strftime('%I:%M %p').lstrip('0')]]})
-        if "description" in update_args:
-            updates.append({'range': f"G{row}", 'values': [[event0["description"]]]})
-        if "location" in update_args:
-            updates.append({'range': f"H{row}", 'values': [[event0["location"]]]})
-        if "category" in update_args:
-            updates.append({'range': f"J{row}", 'values': [[event0["category"]]]})
-        if "recording" in update_args:
-            updates.append({'range': f"K{row}", 'values': [[event0["recording"] or ""]]})
-
-        # Corrected: Write to the correct column (column L or M, depending on spreadsheet header layout)
-        # Based on the user's information that IDs are in column K, we should update that.
-        # However, the original code had this:
-        # updates.append({'range': f"M{row}", 'values': [[event0["id"]]]})
-        # This line is likely the source of the issue. You should remove it or correct it.
-        # Assuming the ID is in column K, the `recording` update should be here.
-        
-        try:
-            ws.batch_update(updates, value_input_option='USER_ENTERED')
-            print("Successfully updated row on the spreadsheet.")
-        except Exception as e:
-            print(f"Failed to update spreadsheet row: {e}")
+        # Write with USER_ENTERED so Sheets keeps text and doesn’t coerce to serial
+        ws.update(f"A{row}:A{row}", [[date_str]], value_input_option='USER_ENTERED')
+        ws.update(f"B{row}:B{row}", [["Updated Details!"]], value_input_option='USER_ENTERED')
+        ws.update(f"C{row}:C{row}", [[event0["title"]]], value_input_option='USER_ENTERED')
+        ws.update(f"D{row}:D{row}", [[event0["leaders"]]], value_input_option='USER_ENTERED')
+        ws.update(f"E{row}:E{row}", [[start_time_date.strftime('%I:%M %p').lstrip('0')]], value_input_option='USER_ENTERED')
+        ws.update(f"F{row}:F{row}", [[end_time_date.strftime('%I:%M %p').lstrip('0')]], value_input_option='USER_ENTERED')
+        ws.update(f"G{row}:G{row}", [[event0["description"]]], value_input_option='USER_ENTERED')
+        ws.update(f"H{row}:H{row}", [[event0["location"]]], value_input_option='USER_ENTERED')
+        ws.update(f"J{row}:J{row}", [[event0["category"]]], value_input_option='USER_ENTERED')
+        ws.update(f"K{row}:K{row}", [[event0["recording"] or ""]], value_input_option='USER_ENTERED')
 
     with open(EVENT_DATA_FILE, 'w') as f:
         json.dump(events, f, indent=4)
 
     # Reorganize after writing (this will re-merge visually, but underlying data stays filled)
     Organize_Sheet(ws, wks)
+
 def get_events_from_file():
     try:
         with open(EVENT_DATA_FILE, 'r') as f:
@@ -730,9 +706,6 @@ def Organize_Sheet(worksheet, spreadsheet_obj):
     import json
     from datetime import datetime
     from gspread.utils import rowcol_to_a1
-    import pytz
-
-    eastern = pytz.timezone('US/Eastern')
 
     print(f"--- Processing sheet: '{worksheet.title}' ---")
 
@@ -800,7 +773,7 @@ def Organize_Sheet(worksheet, spreadsheet_obj):
     start_col  = _find_col('Start Time')
     eid_col    = _find_col('Event ID')
 
-    if date_col is None or notes_col is None or start_col is None or eid_col is None:
+    if date_col is None or notes_col is None or start_col is None:
         print(f"Missing required columns.")
         return
 
@@ -820,68 +793,46 @@ def Organize_Sheet(worksheet, spreadsheet_obj):
         return None
 
     date_keys, time_keys = [], []
-    
-    # Reload the data frame to ensure we have the most up-to-date values from the sheet.
-    all_values = worksheet.get_all_values(value_render_option='UNFORMATTED_VALUE')
-    data_rows = all_values[data_start_idx0:]
-    norm_rows = [r[:len(headers)] + [""] * max(0, len(headers) - len(r)) for r in data_rows]
-    df = pd.DataFrame(norm_rows, columns=headers).replace('', np.nan)
+    years_in_events = []
+    for e in evmap.values():
+        try: years_in_events.append(datetime.fromisoformat(e['start_time']).year)
+        except Exception: pass
+    inferred_year = max(set(years_in_events), key=years_in_events.count) if years_in_events else datetime.now().year
 
     for i in range(len(df)):
         d_key = None; t_key = None
 
-        # Try to get data from events.json via Event ID
-        eid = df.at[i, eid_col]
-        if isinstance(eid, str) and eid in evmap:
-            try:
-                st_iso = evmap[eid]['start_time']
-                st = datetime.fromisoformat(st_iso)
-                d_key = st.year * 10000 + st.month * 100 + st.day
-                t_key = st.hour * 60 + st.minute
-            except Exception:
-                pass
-        
-        # If not found in events.json, fall back to parsing the sheet data
-        if d_key is None or t_key is None:
-            txt = df.at[i, date_col]
-            start_time_txt = df.at[i, start_col]
-            
-            combined_txt = f"{txt} {start_time_txt}"
-            try:
-                # Try parsing with year
-                dt = pd.to_datetime(combined_txt, errors='coerce', format='%A, %B %d %I:%M %p')
-                if pd.isna(dt):
-                     dt = pd.to_datetime(combined_txt, errors='coerce', format='%A, %B %d %I %p')
-                
-                if pd.notna(dt):
-                    # Add current year if it's missing (this is the key change)
-                    current_year = datetime.now().year
-                    if dt.year == 1900: # pd.to_datetime default year
-                        dt = dt.replace(year=current_year)
-                    d_key = dt.year * 10000 + dt.month * 100 + dt.day
-                    t_key = dt.hour * 60 + dt.minute
-            except Exception as e:
-                # Fallback to older logic if parsing fails
-                if isinstance(txt, str) and txt.strip():
-                    for fmt in ("%A, %B %d, %Y", "%A, %B %d"):
-                        try:
-                            dt = datetime.strptime(txt.strip(), fmt)
-                            if fmt == "%A, %B %d": dt = dt.replace(year=datetime.now().year)
-                            d_key = dt.year * 10000 + dt.month * 100 + dt.day
-                            break
-                        except ValueError:
-                            continue
-                if t_key is None:
-                    t = _parse_time_str(start_time_txt)
-                    if t is not None:
-                        t_key = t.hour * 60 + t.minute
-        
-        # Ensure keys are always numeric for sorting
-        if d_key is None: d_key = 0 # Assign a value that puts it at the beginning or end
-        if t_key is None: t_key = 0
+        # from events.json via Event ID
+        if eid_col is not None:
+            eid = df.at[i, eid_col]
+            if isinstance(eid, str) and eid in evmap:
+                try:
+                    st_iso = evmap[eid]['start_time']
+                    st = datetime.fromisoformat(st_iso)
+                    d_key = st.year * 10000 + st.month * 100 + st.day
+                    t_key = st.hour * 60 + st.minute
+                except Exception:
+                    pass
 
-        date_keys.append(d_key)
-        time_keys.append(t_key)
+        # fallback: parse visible Date + Start Time
+        if d_key is None:
+            txt = df.at[i, date_col]
+            if isinstance(txt, str) and txt.strip():
+                for fmt in ("%A, %B %d, %Y", "%A, %B %d"):
+                    try:
+                        dt = datetime.strptime(txt.strip(), fmt)
+                        if fmt == "%A, %B %d": dt = dt.replace(year=inferred_year)
+                        d_key = dt.year * 10000 + dt.month * 100 + dt.day
+                        break
+                    except ValueError:
+                        continue
+        if t_key is None:
+            t = _parse_time_str(df.at[i, start_col])
+            if t is not None:
+                t_key = t.hour * 60 + t.minute
+
+        date_keys.append("" if d_key is None else d_key)
+        time_keys.append("" if t_key is None else t_key)
 
     # E) add two helper cols, sort, remove helpers
     total_cols = len(headers)
