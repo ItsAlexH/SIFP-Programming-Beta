@@ -129,7 +129,7 @@ async def post_events(bot, wks, week_number, IDCol, program, calendar, p):
             if (Event_IDs[j] == '' or Event_IDs[j] is None):
                 process = "Creation"
                 event_id = str(uuid.uuid4())
-                wks.update_cell(j+4, IDCol+2, event_id) 
+                wks.update_cell(j+4, IDCol+2, event_id)
                 event = {
                     "title": Titles[j], "date": Dates[j].isoformat(), 
                     "start_time": Start_Times[j].isoformat(), "end_time": End_Times[j].isoformat(),
@@ -196,135 +196,148 @@ async def post_events(bot, wks, week_number, IDCol, program, calendar, p):
     with open(EVENT_DATA_FILE, 'w') as f:
         json.dump(events, f, indent=4)
 
-def Sort_Events(events):
-    # Sort the events by 'date' and then by 'start_time'
-    events.sort(key=lambda x: (datetime.datetime.fromisoformat(x['date']).date(), datetime.datetime.fromisoformat(x['start_time']).time()))
-    return events
 
-async def update_events_by_id(bot, wks, program, calendar, event_ID, update_args=None):
-    import datetime as _dt
-    import json
-
+async def update_events_by_id(bot, wks, program, calendar, event_ID, update_args = None):
     events = []
     try:
         with open(EVENT_DATA_FILE, 'r') as f:
             events = json.load(f)
     except FileNotFoundError:
         print("Event data file not found. Starting with an empty list.")
-
+    
     event0 = None
     for event in events:
-        if event["id"] == event_ID:
+        if(event["id"] == event_ID):
             event0 = event
             print("Found Event to Update")
             break
+    
+    if(event0 is not None):
+        if update_args is None:
+            print("No updates provided, aborting.")
+            return
 
-    if event0 is None:
-        print("No matching event.")
-        return
+        # Correctly update event0 dictionary with values from update_args
+        if update_args.get("title") is not None: 
+            event0["title"] = update_args["title"]
+        
+        # Check if the date field is being updated
+        if "date" in update_args:
+            # The value is a datetime.date object.
+            # Get the existing time from the original event start time string.
+            existing_start_time = datetime.datetime.fromisoformat(event0["start_time"]).time()
+            existing_end_time = datetime.datetime.fromisoformat(event0["end_time"]).time()
+            # Combine the new date with the existing time.
+            new_start_datetime = eastern.localize(datetime.datetime.combine(update_args["date"], existing_start_time))
+            new_end_datetime = eastern.localize(datetime.datetime.combine(update_args["date"], existing_end_time))
+            
+            event0["start_time"] = new_start_datetime.isoformat()
+            event0["end_time"] = new_end_datetime.isoformat()
+            
+            # Now update the date field in the event object to a full ISO string
+            event0["date"] = new_start_datetime.isoformat()
+        
+        # Check if the start_time field is being updated
+        if "start_time" in update_args:
+            # The value is a datetime.time object.
+            # Get the existing date from the event object.
+            existing_date = datetime.datetime.fromisoformat(event0["date"]).date()
+            # Combine the existing date with the new time.
+            new_start_datetime = eastern.localize(datetime.datetime.combine(existing_date, update_args["start_time"]))
+            event0["start_time"] = new_start_datetime.isoformat()
+            
+        if "end_time" in update_args:
+            # The value is a datetime.time object.
+            # Get the existing date from the event object.
+            existing_date = datetime.datetime.fromisoformat(event0["date"]).date()
+            # Combine the existing date with the new time.
+            new_end_datetime = eastern.localize(datetime.datetime.combine(existing_date, update_args["end_time"]))
+            event0["end_time"] = new_end_datetime.isoformat()
 
-    if update_args is None:
-        print("No updates provided, aborting.")
-        return
+        if update_args.get("leaders") is not None: event0["leaders"] = update_args["leaders"]
+        if update_args.get("location") is not None: event0["location"] = update_args["location"]
+        if update_args.get("category") is not None: event0["category"] = update_args["category"]
+        if update_args.get("description") is not None: event0["description"] = update_args["description"]
+        if update_args.get("recording") is not None: event0["recording"] = update_args["recording"]
+        if update_args.get("status") is not None: event0["status"] = update_args["status"]
+            
+        print("Successfully Updated Internal Memory of Event")
+        
+        week_number = int(event0.get("week", 0))
 
-    # ----- update internal event dict (unchanged logic) -----
-    if update_args.get("title") is not None:
-        event0["title"] = update_args["title"]
+        # Convert ISO strings back to datetime objects
+        start_time_date = datetime.datetime.fromisoformat(event0["start_time"])
+        end_time_date = datetime.datetime.fromisoformat(event0["end_time"])
 
-    if "date" in update_args:
-        existing_start_time = _dt.datetime.fromisoformat(event0["start_time"]).time()
-        existing_end_time   = _dt.datetime.fromisoformat(event0["end_time"]).time()
-        new_start_dt = eastern.localize(_dt.datetime.combine(update_args["date"], existing_start_time))
-        new_end_dt   = eastern.localize(_dt.datetime.combine(update_args["date"], existing_end_time))
-        event0["start_time"] = new_start_dt.isoformat()
-        event0["end_time"]   = new_end_dt.isoformat()
-        event0["date"]       = new_start_dt.isoformat()
+        week_number = int(event0["week"])
+        print("Successfully Updated Internal Memory of Event")
+        
+        # Update Event!
+        if(event0["status"] == "Active"):
+            gc_event = calendar.get_event(event_id=event0["calendar_id"])
+            print(gc_event)
+            gc_event.summary = event0["title"]
+            gc_event.start = start_time_date
+            gc_event.end = end_time_date
+            gc_event.location = event0["location"]
+            gc_event.description = f'<b>Description: </b>{event0["description"] } \n \n<b>Led by: </b>{event0["leaders"]} \n \n<b>Category: </b>{event0["category"]}'
+            gc_event.minutes_before_popup_reminder = 30
+            calendar.update_event(gc_event)
 
-    if "start_time" in update_args:
-        existing_date = _dt.datetime.fromisoformat(event0["date"]).date()
-        new_start_dt = eastern.localize(_dt.datetime.combine(existing_date, update_args["start_time"]))
-        event0["start_time"] = new_start_dt.isoformat()
+        else:
+            calendar.delete_event(event0["calendar_id"])
 
-    if "end_time" in update_args:
-        existing_date = _dt.datetime.fromisoformat(event0["date"]).date()
-        new_end_dt = eastern.localize(_dt.datetime.combine(existing_date, update_args["end_time"]))
-        event0["end_time"] = new_end_dt.isoformat()
-
-    for key in ("leaders","location","category","description","recording","status"):
-        if update_args.get(key) is not None:
-            event0[key] = update_args[key]
-
-    print("Successfully Updated Internal Memory of Event")
-
-    # ----- push to GCal / Discord (unchanged flow) -----
-    start_time_date = _dt.datetime.fromisoformat(event0["start_time"])
-    end_time_date   = _dt.datetime.fromisoformat(event0["end_time"])
-
-    if event0["status"] == "Active":
-        gc_event = calendar.get_event(event_id=event0["calendar_id"])
-        gc_event.summary = event0["title"]
-        gc_event.start   = start_time_date
-        gc_event.end     = end_time_date
-        gc_event.location = event0["location"]
-        gc_event.description = (
-            f'<b>Description: </b>{event0["description"]} \n \n'
-            f'<b>Led by: </b>{event0["leaders"]} \n \n'
-            f'<b>Category: </b>{event0["category"]}'
+        await update_or_create_discord_event(bot, program, event0["title"],
+            f'**Description:** {event0["description"]} \n \n**Led by:** {event0["leaders"]} \n \n**Category:** {event0["category"]}',
+            start_time_date, end_time_date, event0["location"], event0["discord_id"], event0["status"]
         )
-        gc_event.minutes_before_popup_reminder = 30
-        calendar.update_event(gc_event)
-    else:
-        calendar.delete_event(event0["calendar_id"])
+        
+        
+        SOG_WKS = pd.DataFrame(wks.get_worksheet(week_number+2).get_all_values(value_render_option='UNFORMATTED_VALUE'))[2:][:]
+        headers = SOG_WKS.iloc[0].values
+        SOG_WKS.columns = headers
+        SOG_WKS = SOG_WKS[1:]
+    
+        Dates = SOG_WKS['Date'].tolist()
+        for j in range(0, len(Dates)):
+            if isinstance(Dates[j], (int, float)):
+                Dates[j] = conversion_excel_date(Dates[j])
 
-    await update_or_create_discord_event(
-        bot, program, event0["title"],
-        f'**Description:** {event0["description"]} \n \n**Led by:** {event0["leaders"]} \n \n**Category:** {event0["category"]}',
-        start_time_date, end_time_date, event0["location"], event0["discord_id"], event0["status"]
-    )
+        last_valid_date = None
+        for j in range(len(Dates)):
+            if isinstance(Dates[j], datetime.datetime):
+                last_valid_date = Dates[j]
+            elif Dates[j] == '' and last_valid_date is not None:
+                Dates[j] = last_valid_date
+            else:
+                Dates[j] = None
 
-    # ----- update the SOG sheet row (THIS IS THE FIXED PART) -----
-    week_number = int(event0.get("week", 0))
-    df = pd.DataFrame(wks.get_worksheet(week_number+2).get_all_values(value_render_option='UNFORMATTED_VALUE'))[2:][:]
-    headers = df.iloc[0].values
-    df.columns = headers
-    df = df[1:]
-    event_ids = df['Event ID'].tolist()
-    ii = None
-    for i, eid in enumerate(event_ids):
-        if eid == event0["id"]:
-            ii = i
-            break
-
-    ws = wks.get_worksheet(week_number+2)
-
-    # Make sure the sheet is in the "date1,date1,..." state (unmerge + filldown)
-    try:
-        filldown_dates_in_sheet(ws)
-    except Exception as e:
-        print(f"[warn] filldown_dates_in_sheet in update_events_by_id failed: {e}")
-
-    if ii is not None:
-        row = ii + 4  # data starts at row 4
-        # human-readable date string (text, not serial)
-        date_str = start_time_date.strftime('%A, %B %d')
-
-        # Write with USER_ENTERED so Sheets keeps text and doesn’t coerce to serial
-        ws.update(f"A{row}:A{row}", [[date_str]], value_input_option='USER_ENTERED')
-        ws.update(f"B{row}:B{row}", [["Updated Details!"]], value_input_option='USER_ENTERED')
-        ws.update(f"C{row}:C{row}", [[event0["title"]]], value_input_option='USER_ENTERED')
-        ws.update(f"D{row}:D{row}", [[event0["leaders"]]], value_input_option='USER_ENTERED')
-        ws.update(f"E{row}:E{row}", [[start_time_date.strftime('%I:%M %p').lstrip('0')]], value_input_option='USER_ENTERED')
-        ws.update(f"F{row}:F{row}", [[end_time_date.strftime('%I:%M %p').lstrip('0')]], value_input_option='USER_ENTERED')
-        ws.update(f"G{row}:G{row}", [[event0["description"]]], value_input_option='USER_ENTERED')
-        ws.update(f"H{row}:H{row}", [[event0["location"]]], value_input_option='USER_ENTERED')
-        ws.update(f"J{row}:J{row}", [[event0["category"]]], value_input_option='USER_ENTERED')
-        ws.update(f"K{row}:K{row}", [[event0["recording"] or ""]], value_input_option='USER_ENTERED')
-
+        Event_IDs = SOG_WKS['Event ID'].tolist()
+        ii = None
+        for (i,event_id) in enumerate(Event_IDs):
+            if(event_id == event0["id"]):
+                ii = i
+        
+        Verbose_Sheet(program, wks, week_number)
+        row_offset = 4
+        if(ii != None):
+            # Format the date and time strings before updating the cell.
+            wks.get_worksheet(week_number+2).update_cell(ii+row_offset, 1, start_time_date.strftime('%A, %B %d'))
+            wks.get_worksheet(week_number+2).update_cell(ii+row_offset, 2, "Updated Details!")
+            wks.get_worksheet(week_number+2).update_cell(ii+row_offset, 3, event0["title"])
+            wks.get_worksheet(week_number+2).update_cell(ii+row_offset, 4, event0["leaders"])
+            wks.get_worksheet(week_number+2).update_cell(ii+row_offset, 5, start_time_date.strftime('%I:%M %p'))
+            wks.get_worksheet(week_number+2).update_cell(ii+row_offset, 6, end_time_date.strftime('%I:%M %p'))
+            wks.get_worksheet(week_number+2).update_cell(ii+row_offset, 7, event0["description"])
+            wks.get_worksheet(week_number+2).update_cell(ii+row_offset, 8, event0["location"])
+            wks.get_worksheet(week_number+2).update_cell(ii+row_offset, 10, event0["category"])
+            wks.get_worksheet(week_number+2).update_cell(ii+row_offset, 11, event0["recording"])
+        
     with open(EVENT_DATA_FILE, 'w') as f:
         json.dump(events, f, indent=4)
-
-    # Reorganize after writing (this will re-merge visually, but underlying data stays filled)
-    Organize_Sheet(ws, wks)
+        
+    # Reorganize the entire sheet after the update.
+    Organize_Sheet(wks.get_worksheet(week_number + 2), wks)
 
 def get_events_from_file():
     try:
@@ -695,267 +708,226 @@ def Format_Time(numeric_time):
 
 def Organize_Sheet(worksheet, spreadsheet_obj):
     """
-    1) Unmerge Date & Notes columns across the data region.
-    2) Forward-fill Date (text) in-sheet.
-    3) Sort rows by (Date, Start Time) using two temporary numeric helper columns.
-    4) Delete helpers.
-    5) Re-merge contiguous equal-Date groups for Date and Notes.
+    Merge contiguous rows in the Date and Notes columns when the Date is identical.
+    Assumes:
+      - Headers are on 1-based row 3 (0-based index = 2)
+      - Data starts on 1-based row 4 (0-based index = 3)
+      - Columns include 'Date' and 'Notes' (and we don't merge blank dates)
     """
+    import re
     import pandas as pd
     import numpy as np
-    import json
-    from datetime import datetime
-    from gspread.utils import rowcol_to_a1
 
     print(f"--- Processing sheet: '{worksheet.title}' ---")
 
-    # A) ensure NO vertical merges in Date or Notes before sorting
-    try:
-        unmerge_columns_in_data(worksheet, header_names=("Date", "Notes"))
-    except Exception as e:
-        print(f"[warn] unmerge Date/Notes failed: {e}")
-
-    # B) fill-down Date so every row has a value
-    try:
-        filldown_dates_in_sheet(worksheet)
-    except Exception as e:
-        print(f"[warn] filldown_dates_in_sheet failed: {e}")
-
-    # C) load grid
+    # ---- Load grid ----
     all_values = worksheet.get_all_values(value_render_option='UNFORMATTED_VALUE')
     if not all_values:
         print(f"Skipping sheet '{worksheet.title}': empty.")
         return
 
-    header_row_idx0 = 2   # row 3
-    data_start_idx0 = 3   # row 4
+    header_row_index = 2          # 0-based; sheet row 3
+    data_start_row_index = 3      # 0-based; sheet row 4
 
-    if len(all_values) <= header_row_idx0:
-        print(f"Skipping sheet '{worksheet.title}': no headers.")
+    if len(all_values) <= header_row_index:
+        print(f"Skipping sheet '{worksheet.title}': not enough rows for headers.")
         return
 
-    raw_headers = list(all_values[header_row_idx0])
+    raw_headers = all_values[header_row_index]
+    # Trim trailing empty columns in headers
     while raw_headers and raw_headers[-1] == "":
         raw_headers.pop()
+
     if not raw_headers:
-        print(f"Skipping sheet '{worksheet.title}': empty headers.")
+        print(f"Skipping sheet '{worksheet.title}': no headers found.")
         return
 
+    # Deduplicate headers if needed (A, A -> A, A_2)
     def _dedupe_headers(headers):
-        seen, out = {}, []
+        seen = {}
+        out = []
         for h in headers:
             name = h if h is not None else ""
             if name not in seen:
-                seen[name] = 1; out.append(name)
+                seen[name] = 1
+                out.append(name)
             else:
-                seen[name] += 1; out.append(f"{name}_{seen[name]}")
+                seen[name] += 1
+                out.append(f"{name}_{seen[name]}")
         return out
 
     headers = _dedupe_headers(raw_headers)
-    if len(all_values) <= data_start_idx0:
+
+    # Build dataframe for the data region (rows under the header row)
+    if len(all_values) <= data_start_row_index:
         print(f"Skipping sheet '{worksheet.title}': no data rows.")
         return
 
-    data_rows = all_values[data_start_idx0:]
-    norm_rows = [r[:len(headers)] + [""] * max(0, len(headers) - len(r)) for r in data_rows]
-    # Silence the FutureWarning by explicitly calling infer_objects
-    df = pd.DataFrame(norm_rows, columns=headers).replace('', np.nan)
-    df = df.infer_objects(copy=False)
+    data_rows = all_values[data_start_row_index:]
+    # Pad rows to headers length and cut any overflow
+    norm_rows = [row[:len(headers)] + [""] * max(0, len(headers) - len(row)) for row in data_rows]
+    df = pd.DataFrame(norm_rows, columns=headers)
 
+    # Light cleanup: treat empty strings as NaN (helpful for grouping)
+    df = df.replace('', np.nan).infer_objects(copy=False)
+
+    # Column names we care about
+    DATE_COL  = 'Date'
+    NOTES_COL = 'Notes'
+
+    # Try to find the columns (case-insensitive fallback)
     def _find_col(name):
-        if name in df.columns: return name
+        if name in df.columns:
+            return name
         for c in df.columns:
-            if str(c).strip().lower() == name.lower(): return c
+            if str(c).strip().lower() == name.lower():
+                return c
         return None
 
-    date_col   = _find_col('Date')
-    notes_col  = _find_col('Notes')
-    start_col  = _find_col('Start Time')
-    eid_col    = _find_col('Event ID')
+    date_col  = _find_col(DATE_COL)
+    notes_col = _find_col(NOTES_COL)
 
-    if date_col is None or notes_col is None or start_col is None:
-        print(f"Missing required columns.")
+    if date_col is None or notes_col is None:
+        print(f"Skipping sheet '{worksheet.title}': missing '{DATE_COL}' or '{NOTES_COL}' columns.")
         return
 
-    # D) build sort keys (prefer events.json ISO datetimes)
-    try:
-        with open('events.json', 'r') as f:
-            evmap = {e['id']: e for e in (json.load(f) or []) if isinstance(e, dict) and e.get('id')}
-    except FileNotFoundError:
-        evmap = {}
-
-    def _parse_time_str(s):
-        if not isinstance(s, str): return None
-        S = s.strip().upper().replace('.', '')
-        for fmt in ("%I:%M %p", "%I %p"):
-            try: return datetime.strptime(S, fmt).time()
-            except ValueError: pass
-        return None
-
-    date_keys, time_keys = [], []
-    years_in_events = []
-    for e in evmap.values():
-        try: years_in_events.append(datetime.fromisoformat(e['start_time']).year)
-        except Exception: pass
-    inferred_year = max(set(years_in_events), key=years_in_events.count) if years_in_events else datetime.now().year
-
-    for i in range(len(df)):
-        d_key = None; t_key = None
-
-        # from events.json via Event ID
-        if eid_col is not None:
-            eid = df.at[i, eid_col]
-            if isinstance(eid, str) and eid in evmap:
-                try:
-                    st_iso = evmap[eid]['start_time']
-                    st = datetime.fromisoformat(st_iso)
-                    d_key = st.year * 10000 + st.month * 100 + st.day
-                    t_key = st.hour * 60 + st.minute
-                except Exception:
-                    pass
-
-        # fallback: parse visible Date + Start Time
-        if d_key is None:
-            txt = df.at[i, date_col]
-            if isinstance(txt, str) and txt.strip():
-                for fmt in ("%A, %B %d, %Y", "%A, %B %d"):
-                    try:
-                        dt = datetime.strptime(txt.strip(), fmt)
-                        if fmt == "%A, %B %d": dt = dt.replace(year=inferred_year)
-                        d_key = dt.year * 10000 + dt.month * 100 + dt.day
-                        break
-                    except ValueError:
-                        continue
-        if t_key is None:
-            t = _parse_time_str(df.at[i, start_col])
-            if t is not None:
-                t_key = t.hour * 60 + t.minute
-
-        date_keys.append("" if d_key is None else d_key)
-        time_keys.append("" if t_key is None else t_key)
-
-    # E) add two helper cols, sort, remove helpers
-    total_cols = len(headers)
-    h_date_idx0 = total_cols
-    h_time_idx0 = total_cols + 1
-
-    try:
-        spreadsheet_obj.batch_update({
-            "requests": [{
-                "insertDimension": {
-                    "range": {
-                        "sheetId": worksheet.id,
-                        "dimension": "COLUMNS",
-                        "startIndex": h_date_idx0,
-                        "endIndex": h_time_idx0 + 1
-                    },
-                    "inheritFromBefore": True
-                }
-            }]
-        })
-    except Exception as e:
-        print(f"[warn] insert helpers failed: {e}")
-
-    start_row_1b = data_start_idx0 + 1
-    end_row_1b   = data_start_idx0 + len(df)
-    a1_date = f"{rowcol_to_a1(start_row_1b, h_date_idx0 + 1)}:{rowcol_to_a1(end_row_1b, h_date_idx0 + 1)}"
-    a1_time = f"{rowcol_to_a1(start_row_1b, h_time_idx0 + 1)}:{rowcol_to_a1(end_row_1b, h_time_idx0 + 1)}"
-    worksheet.update(a1_date, [[v] for v in date_keys], value_input_option='USER_ENTERED')
-    worksheet.update(a1_time, [[v] for v in time_keys], value_input_option='USER_ENTERED')
-
-    # SORT (now safe: Date & Notes are unmerged)
-    try:
-        spreadsheet_obj.batch_update({
-            "requests": [{
-                "sortRange": {
-                    "range": {
-                        "sheetId": worksheet.id,
-                        "startRowIndex": data_start_idx0,
-                        "endRowIndex": data_start_idx0 + len(df),
-                        "startColumnIndex": 0,
-                        "endColumnIndex": h_time_idx0 + 1
-                    },
-                    "sortSpecs": [
-                        {"dimensionIndex": h_date_idx0, "sortOrder": "ASCENDING"},
-                        {"dimensionIndex": h_time_idx0, "sortOrder": "ASCENDING"},
-                    ]
-                }
-            }]
-        })
-    except Exception as e:
-        print(f"[warn] sortRange failed: {e}")
-
-    # delete helpers
-    try:
-        spreadsheet_obj.batch_update({
-            "requests": [{
-                "deleteDimension": {
-                    "range": {
-                        "sheetId": worksheet.id,
-                        "dimension": "COLUMNS",
-                        "startIndex": h_date_idx0,
-                        "endIndex": h_time_idx0 + 1
-                    }
-                }
-            }]
-        })
-    except Exception as e:
-        print(f"[warn] delete helpers failed: {e}")
-
-    # F) reload and re-merge equal-Date groups for Date and Notes
-    all_values = worksheet.get_all_values(value_render_option='UNFORMATTED_VALUE')
-    data_rows = all_values[data_start_idx0:]
-    norm_rows = [r[:len(headers)] + [""] * max(0, len(headers) - len(r)) for r in data_rows]
-    df = pd.DataFrame(norm_rows, columns=headers).replace('', np.nan)
-
+    # Convert dates to strings for equality checks while keeping NaN distinct
+    # (If your Date column is already normalized to datetime, you can keep it;
+    #  we only need "equal contiguous values" behavior.)
     date_series = df[date_col].astype(object)
+
+    # Identify contiguous groups with identical, non-null date values
     groups = []
-    start = None; prev = None
+    start = None
+    prev = None
     for i, val in enumerate(date_series):
         if pd.isna(val):
-            if start is not None and i - start >= 2: groups.append((start, i - 1))
-            start = None; prev = None; continue
+            # end any open group before a blank date
+            if start is not None and i - start >= 2:
+                groups.append((start, i - 1))
+            start = None
+            prev = None
+            continue
+
         if prev is None or val != prev:
-            if start is not None and i - start >= 2: groups.append((start, i - 1))
+            # new value
+            if start is not None and i - start >= 2:
+                groups.append((start, i - 1))
             start = i
+        # else: still in the same group
+
         prev = val
+
+    # Close trailing group
     if start is not None:
         i = len(date_series)
-        if i - start >= 2: groups.append((start, i - 1))
+        if i - start >= 2:
+            groups.append((start, i - 1))
 
-    def _col_idx(label):
-        for idx, h in enumerate(headers):
-            if str(h).strip().lower() == label.lower(): return idx
-        return None
+    # Early exit if no groups to merge
+    if not groups:
+        print(f"No contiguous identical-date groups found to merge in '{worksheet.title}'.")
+        return
 
-    date_idx0 = _col_idx('date')
-    notes_idx0 = _col_idx('notes')
-    if date_idx0 is None or notes_idx0 is None:
-        print("Cannot locate Date/Notes for merging."); return
+    # Find column indices in the sheet (0-based)
+    # We assume headers row defines column order, no column reordering after
+    try:
+        header_row_full = all_values[header_row_index]
+        # compute a mapping of header-name to first matching index (case-insensitive)
+        def _col_index(colname):
+            for idx, name in enumerate(header_row_full):
+                if str(name).strip().lower() == str(colname).strip().lower():
+                    return idx
+            # fallback to exact match in dataframe headers if header row had blanks renamed
+            if colname in df.columns:
+                # try by position in df relative to headers
+                return list(df.columns).index(colname)
+            raise KeyError(colname)
 
-    reqs = []
-    for r0, r1 in groups:
-        top_api = (r0 + 4) - 1
-        bot_api = (r1 + 4)
-        for cidx in (date_idx0, notes_idx0):
-            reqs.append({
-                "mergeCells": {
-                    "range": {
-                        "sheetId": worksheet.id,
-                        "startRowIndex": top_api,
-                        "endRowIndex": bot_api,
-                        "startColumnIndex": cidx,
-                        "endColumnIndex": cidx + 1
-                    },
-                    "mergeType": "MERGE_ALL"
-                }
-            })
-    if reqs:
-        try:
-            spreadsheet_obj.batch_update({"requests": reqs})
-            print(f"Merged {len(groups)} date groups in '{worksheet.title}'.")
-        except Exception as e:
-            print(f"[warn] merge requests failed: {e}")
+        date_col_idx  = _col_index(date_col)
+        notes_col_idx = _col_index(notes_col)
+
+    except Exception as e:
+        print(f"Could not resolve column indices for '{DATE_COL}'/'{NOTES_COL}': {e}")
+        return
+
+    # Build batch requests
+    requests = []
+
+    # Unmerge any existing merges in the Date and Notes columns over the data region
+    # Data occupies sheet rows [data_start_row_index, data_start_row_index + len(df)) (end-exclusive)
+    unmerge_range = {
+        "sheetId": worksheet._properties.get("sheetId"),
+        "startRowIndex": data_start_row_index,
+        "endRowIndex": data_start_row_index + len(df),   # end-exclusive (correct for the full data block)
+    }
+
+    # Unmerge Date column
+    requests.append({
+        "unmergeCells": {
+            "range": {
+                **unmerge_range,
+                "startColumnIndex": date_col_idx,
+                "endColumnIndex": date_col_idx + 1
+            }
+        }
+    })
+    # Unmerge Notes column
+    requests.append({
+        "unmergeCells": {
+            "range": {
+                **unmerge_range,
+                "startColumnIndex": notes_col_idx,
+                "endColumnIndex": notes_col_idx + 1
+            }
+        }
+    })
+
+    # Add merge requests for each contiguous group
+    for (g_start, g_end) in groups:
+        # Convert dataframe row indices to sheet row indices (0-based)
+        start_row_api = data_start_row_index + g_start
+        end_row_api   = data_start_row_index + g_end + 1   # +1 because endRowIndex is end-exclusive
+
+        # Human-readable for logging (1-based)
+        hr_start = start_row_api + 1
+        hr_end   = end_row_api     # already 1-based because end is exclusive
+
+        # Debug
+        date_label = date_series.iloc[g_start]
+        print(f"DEBUG: Merging Date column rows {hr_start} to {hr_end} for date {date_label}")
+        print(f"DEBUG: Merging Notes column rows {hr_start} to {hr_end} for date {date_label}")
+
+        # Merge Date column group
+        requests.append({
+            "mergeCells": {
+                "range": {
+                    "sheetId": worksheet._properties.get("sheetId"),
+                    "startRowIndex": start_row_api,
+                    "endRowIndex": end_row_api,            # end-exclusive
+                    "startColumnIndex": date_col_idx,
+                    "endColumnIndex": date_col_idx + 1
+                },
+                "mergeType": "MERGE_ALL"
+            }
+        })
+        # Merge Notes column group
+        requests.append({
+            "mergeCells": {
+                "range": {
+                    "sheetId": worksheet._properties.get("sheetId"),
+                    "startRowIndex": start_row_api,
+                    "endRowIndex": end_row_api,            # end-exclusive
+                    "startColumnIndex": notes_col_idx,
+                    "endColumnIndex": notes_col_idx + 1
+                },
+                "mergeType": "MERGE_ALL"
+            }
+        })
+
+    # Fire the batch
+    spreadsheet_obj.batch_update({"requests": requests})
+    print(f"Successfully merged cells for sheet: '{worksheet.title}'")
 
 def Verbose_Sheet(program, wks_SOG, week_number):
     specific_week = True
@@ -1010,141 +982,3 @@ def Reorganize_Sheet(program, wks_SOG, week_number):
         except Exception as e:
             print(f"!!! An error occurred while processing sheet '{sheet_name}': {e}")
     print('\nAll sheets processed.')
-
-def filldown_dates_in_sheet(worksheet, *, date_header_name: str = "Date") -> None:
-    """
-    1) Unmerge the Date column across all data rows.
-    2) Forward-fill the Date cells in-sheet so every event row has a concrete date string
-       (e.g., 'Monday, September 22') rather than blanks from merged cells.
-
-    Assumptions:
-      - Headers row is 3 (1-based); data starts at row 4.
-      - A header named 'Date' (case-insensitive).
-    """
-    import pandas as pd
-    import numpy as np
-    from datetime import datetime, timedelta
-
-    header_row_index = 2   # 0-based -> row 3 in the sheet
-    data_start_row_idx = 3 # 0-based -> row 4 in the sheet
-
-    # Pull grid
-    all_vals = worksheet.get_all_values(value_render_option='UNFORMATTED_VALUE')
-    if not all_vals or len(all_vals) <= header_row_index:
-        return
-
-    headers = list(all_vals[header_row_index])
-    # trim trailing empties
-    while headers and headers[-1] == "":
-        headers.pop()
-    if not headers:
-        return
-
-    # locate Date col
-    date_col_idx = None
-    for i, h in enumerate(headers):
-        if str(h).strip().lower() == date_header_name.lower():
-            date_col_idx = i
-            break
-    if date_col_idx is None:
-        return
-
-    # Unmerge the Date column across the data region (safe even if nothing is merged)
-    try:
-        worksheet.spreadsheet.batch_update({
-            "requests": [{
-                "unmergeCells": {
-                    "range": {
-                        "sheetId": worksheet.id,
-                        "startRowIndex": data_start_row_idx,         # 0-based
-                        "endRowIndex": len(all_vals),                 # end-exclusive
-                        "startColumnIndex": date_col_idx,
-                        "endColumnIndex": date_col_idx + 1
-                    }
-                }
-            }]
-        })
-    except Exception as e:
-        print(f"[warn] unmerge Date col failed: {e}")
-
-    # Build a DF for forward fill
-    data_rows = all_vals[data_start_row_idx:]
-    norm = [r[:len(headers)] + [""] * max(0, len(headers) - len(r)) for r in data_rows]
-    import pandas as pd
-    df = pd.DataFrame(norm, columns=headers)
-
-    # Normalize existing date cell to a TEXT display (handles serials like 45923, '45924.0', etc.)
-    def _as_display_text(x):
-        if x is None or str(x).strip() == "":
-            return np.nan
-        s = str(x).strip()
-        # numeric like 45923 or 45924.0 -> Excel epoch (1899-12-30)
-        try:
-            fv = float(s)
-            base = datetime(1899, 12, 30)
-            dt = base + timedelta(days=int(round(fv)))
-            return dt.strftime('%A, %B %d')
-        except ValueError:
-            pass
-        # try generic parse; if it yields a date, format as text
-        try:
-            dt = pd.to_datetime(s, errors='raise')
-            return dt.strftime('%A, %B %d')
-        except Exception:
-            return s  # already a text label like 'Monday, September 22'
-
-    col = df.iloc[:, date_col_idx].map(_as_display_text)
-    col = col.ffill()  # forward-fill blanks
-
-    # Write back only the Date column using USER_ENTERED so it stays as text
-    from gspread.utils import rowcol_to_a1
-    start_row_1b = data_start_row_idx + 1
-    end_row_1b   = data_start_row_idx + len(df)
-    a1_start = rowcol_to_a1(start_row_1b, date_col_idx + 1)
-    a1_end   = rowcol_to_a1(end_row_1b, date_col_idx + 1)
-    rng = f"{a1_start}:{a1_end}"
-    values = [[("" if (v is np.nan or v is None or str(v) == "nan") else str(v))] for v in col.tolist()]
-    if values:
-        worksheet.update(rng, values, value_input_option='USER_ENTERED')
-
-def unmerge_columns_in_data(worksheet, header_names=("Date", "Notes")) -> None:
-    """
-    Unmerge vertical merges for the specified header columns across the data region.
-    Headers on row 3 (1-based). Data starts on row 4.
-    """
-    all_vals = worksheet.get_all_values(value_render_option='UNFORMATTED_VALUE')
-    if not all_vals or len(all_vals) <= 2:
-        return
-
-    headers = list(all_vals[2])
-    while headers and headers[-1] == "":
-        headers.pop()
-    if not headers:
-        return
-
-    # map names -> indices
-    wanted_idx = []
-    for name in header_names:
-        for i, h in enumerate(headers):
-            if str(h).strip().lower() == name.lower():
-                wanted_idx.append(i)
-                break
-
-    if not wanted_idx:
-        return
-
-    reqs = []
-    for idx in wanted_idx:
-        reqs.append({
-            "unmergeCells": {
-                "range": {
-                    "sheetId": worksheet.id,
-                    "startRowIndex": 3,                # data start (0-based)
-                    "endRowIndex": len(all_vals),      # end-exclusive
-                    "startColumnIndex": idx,
-                    "endColumnIndex": idx + 1
-                }
-            }
-        })
-    if reqs:
-        worksheet.spreadsheet.batch_update({"requests": reqs})

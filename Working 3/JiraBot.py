@@ -31,14 +31,7 @@ import json
 
 from OrgParse import conversion_excel_date, parse_times, get_color, post_events, get_event_by_search_query, update_events_by_id, Reorganize_Sheet, Verbose_Sheet, update_events_submitted, get_event_submitted
 Missing_color = 1
-from FSI_Programming import Import_Prog, Reorganize_Sheet_Import
-
-# TODO:
-# 1. Import_Prog not importing Sunday events (ONLY IF THE ONGOING CHALLENGES MISSING)
-# 2. Weekly Events
-# 3. Import_Prog using diff Organize for now (in FSI_Programming) because the other does not delete rows, but DOES the rest of the import stuff right.
-# 4. Organize (in OrgParse) not deleting extra rows.
-# 5. Merging it all.
+from FSI_Programming import Import_Prog
 
 # =======================
 # External function stubs
@@ -96,9 +89,9 @@ async def Deploy_SOG(bot, program: str, week_number: int) -> str:
     Leaders_mask = [val == '' for val in Leaders]
 
     if(program == "Online"):
-        IDCol = 10
+        IDCol = 11
     else: 
-        IDCol = 9
+        IDCol = 10
     
     await post_events(bot, wks.get_worksheet(week_number+2), week_number, IDCol, program, calendar, p = (Titles, Leaders, Leaders_mask, Dates, 
                                      Start_Times, End_Times, Locations, Locations_mask, Descriptions, Descriptions_mask, Categories, Event_IDs, Colors))
@@ -118,7 +111,7 @@ def Import_Programming(program: str, week_number: int, import_type: int) -> str:
         wks_SOG = gc.open(os.getenv("SIFP_SOG_TOKEN"))
 
     Import_Prog(program, wks_PROG, wks_SOG, week_number, import_type)
-    Reorganize_Sheet_Import(program, wks_SOG, week_number)
+    Reorganize_Sheet(program, wks_SOG, week_number)
     if(import_type == 0):
         label = "Programming"
     elif(import_type == 1):
@@ -147,8 +140,7 @@ def Submit_Event(program: str, payload: dict) -> str:
         hosts_string,
         payload.get('description'), 
         payload.get('halps'),
-        payload.get('location'),
-        payload.get('recurrance')
+        payload.get('location')
     ]
     wks_prog.append_row(row_data)
     return f"Event '{payload.get('title','(untitled)')}' submitted for {program}."
@@ -521,13 +513,12 @@ class SIRA_BOT(commands.Cog):
             if halps is None: return
             location = await ask("Enter **Location**:")
             if location is None: return
-            recurrence = await ask("Is this event recurring? (No, Weekly, Biweekly)")
 
             payload = {
                 "date": date.strftime('%m/%d/%Y'), "start_time": start_t.strftime("%I:%M %p"),
                 "end_time": end_t.strftime("%I:%M %p"), "title": title,
                 "description": description, "hosts": [h.strip() for h in hosts.split(",") if h.strip()],
-                "halps": halps, "location": location, "recurrance": recurrence
+                "halps": halps, "location": location,
             }
 
             await channel.send(f"📝 Submitting event **{title}** for **{program}**...")

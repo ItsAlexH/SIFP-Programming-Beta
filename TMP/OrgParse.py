@@ -129,7 +129,7 @@ async def post_events(bot, wks, week_number, IDCol, program, calendar, p):
             if (Event_IDs[j] == '' or Event_IDs[j] is None):
                 process = "Creation"
                 event_id = str(uuid.uuid4())
-                wks.update_cell(j+4, IDCol+2, event_id) 
+                wks.update_cell(j+4, IDCol+2, event_id)
                 event = {
                     "title": Titles[j], "date": Dates[j].isoformat(), 
                     "start_time": Start_Times[j].isoformat(), "end_time": End_Times[j].isoformat(),
@@ -200,6 +200,7 @@ def Sort_Events(events):
     # Sort the events by 'date' and then by 'start_time'
     events.sort(key=lambda x: (datetime.datetime.fromisoformat(x['date']).date(), datetime.datetime.fromisoformat(x['start_time']).time()))
     return events
+
 
 async def update_events_by_id(bot, wks, program, calendar, event_ID, update_args=None):
     import datetime as _dt
@@ -695,267 +696,171 @@ def Format_Time(numeric_time):
 
 def Organize_Sheet(worksheet, spreadsheet_obj):
     """
-    1) Unmerge Date & Notes columns across the data region.
-    2) Forward-fill Date (text) in-sheet.
-    3) Sort rows by (Date, Start Time) using two temporary numeric helper columns.
-    4) Delete helpers.
-    5) Re-merge contiguous equal-Date groups for Date and Notes.
+    Merge contiguous rows in the Date and Notes columns when the Date is identical.
+    Now **first** forward-fills the Date column in the sheet so downstream code
+    always reads fully populated dates (date1, date1, date1, date2, ...).
+
+    Assumes:
+      - Headers are on 1-based row 3 (0-based index = 2)
+      - Data starts on 1-based row 4 (0-based index = 3)
+      - Columns include 'Date' and 'Notes'
     """
     import pandas as pd
     import numpy as np
-    import json
-    from datetime import datetime
-    from gspread.utils import rowcol_to_a1
 
     print(f"--- Processing sheet: '{worksheet.title}' ---")
 
-    # A) ensure NO vertical merges in Date or Notes before sorting
-    try:
-        unmerge_columns_in_data(worksheet, header_names=("Date", "Notes"))
-    except Exception as e:
-        print(f"[warn] unmerge Date/Notes failed: {e}")
-
-    # B) fill-down Date so every row has a value
+    # 0) NEW: ensure the live sheet Date column is filled before we read it
     try:
         filldown_dates_in_sheet(worksheet)
     except Exception as e:
         print(f"[warn] filldown_dates_in_sheet failed: {e}")
 
-    # C) load grid
+    # 1) Load grid (now contains filled dates)
     all_values = worksheet.get_all_values(value_render_option='UNFORMATTED_VALUE')
     if not all_values:
         print(f"Skipping sheet '{worksheet.title}': empty.")
         return
 
-    header_row_idx0 = 2   # row 3
-    data_start_idx0 = 3   # row 4
+    header_row_index = 2          # 0-based; sheet row 3
+    data_start_row_index = 3      # 0-based; sheet row 4
 
-    if len(all_values) <= header_row_idx0:
-        print(f"Skipping sheet '{worksheet.title}': no headers.")
+    if len(all_values) <= header_row_index:
+        print(f"Skipping sheet '{worksheet.title}': not enough rows for headers.")
         return
 
-    raw_headers = list(all_values[header_row_idx0])
+    raw_headers = list(all_values[header_row_index])
     while raw_headers and raw_headers[-1] == "":
         raw_headers.pop()
     if not raw_headers:
-        print(f"Skipping sheet '{worksheet.title}': empty headers.")
+        print(f"Skipping sheet '{worksheet.title}': no headers found.")
         return
 
     def _dedupe_headers(headers):
-        seen, out = {}, []
+        seen = {}
+        out = []
         for h in headers:
             name = h if h is not None else ""
             if name not in seen:
-                seen[name] = 1; out.append(name)
+                seen[name] = 1
+                out.append(name)
             else:
-                seen[name] += 1; out.append(f"{name}_{seen[name]}")
+                seen[name] += 1
+                out.append(f"{name}_{seen[name]}")
         return out
 
     headers = _dedupe_headers(raw_headers)
-    if len(all_values) <= data_start_idx0:
+
+    if len(all_values) <= data_start_row_index:
         print(f"Skipping sheet '{worksheet.title}': no data rows.")
         return
 
-    data_rows = all_values[data_start_idx0:]
-    norm_rows = [r[:len(headers)] + [""] * max(0, len(headers) - len(r)) for r in data_rows]
-    # Silence the FutureWarning by explicitly calling infer_objects
-    df = pd.DataFrame(norm_rows, columns=headers).replace('', np.nan)
-    df = df.infer_objects(copy=False)
+    data_rows = all_values[data_start_row_index:]
+    norm_rows = [row[:len(headers)] + [""] * max(0, len(headers) - len(row)) for row in data_rows]
+    df = pd.DataFrame(norm_rows, columns=headers).replace('', np.nan).infer_objects(copy=False)
+
+    DATE_COL  = 'Date'
+    NOTES_COL = 'Notes'
 
     def _find_col(name):
-        if name in df.columns: return name
+        if name in df.columns:
+            return name
         for c in df.columns:
-            if str(c).strip().lower() == name.lower(): return c
+            if str(c).strip().lower() == name.lower():
+                return c
         return None
 
-    date_col   = _find_col('Date')
-    notes_col  = _find_col('Notes')
-    start_col  = _find_col('Start Time')
-    eid_col    = _find_col('Event ID')
+    date_col  = _find_col(DATE_COL)
+    notes_col = _find_col(NOTES_COL)
 
-    if date_col is None or notes_col is None or start_col is None:
-        print(f"Missing required columns.")
+    if date_col is None or notes_col is None:
+        print(f"Skipping sheet '{worksheet.title}': missing '{DATE_COL}' or '{NOTES_COL}' columns.")
         return
 
-    # D) build sort keys (prefer events.json ISO datetimes)
-    try:
-        with open('events.json', 'r') as f:
-            evmap = {e['id']: e for e in (json.load(f) or []) if isinstance(e, dict) and e.get('id')}
-    except FileNotFoundError:
-        evmap = {}
-
-    def _parse_time_str(s):
-        if not isinstance(s, str): return None
-        S = s.strip().upper().replace('.', '')
-        for fmt in ("%I:%M %p", "%I %p"):
-            try: return datetime.strptime(S, fmt).time()
-            except ValueError: pass
-        return None
-
-    date_keys, time_keys = [], []
-    years_in_events = []
-    for e in evmap.values():
-        try: years_in_events.append(datetime.fromisoformat(e['start_time']).year)
-        except Exception: pass
-    inferred_year = max(set(years_in_events), key=years_in_events.count) if years_in_events else datetime.now().year
-
-    for i in range(len(df)):
-        d_key = None; t_key = None
-
-        # from events.json via Event ID
-        if eid_col is not None:
-            eid = df.at[i, eid_col]
-            if isinstance(eid, str) and eid in evmap:
-                try:
-                    st_iso = evmap[eid]['start_time']
-                    st = datetime.fromisoformat(st_iso)
-                    d_key = st.year * 10000 + st.month * 100 + st.day
-                    t_key = st.hour * 60 + st.minute
-                except Exception:
-                    pass
-
-        # fallback: parse visible Date + Start Time
-        if d_key is None:
-            txt = df.at[i, date_col]
-            if isinstance(txt, str) and txt.strip():
-                for fmt in ("%A, %B %d, %Y", "%A, %B %d"):
-                    try:
-                        dt = datetime.strptime(txt.strip(), fmt)
-                        if fmt == "%A, %B %d": dt = dt.replace(year=inferred_year)
-                        d_key = dt.year * 10000 + dt.month * 100 + dt.day
-                        break
-                    except ValueError:
-                        continue
-        if t_key is None:
-            t = _parse_time_str(df.at[i, start_col])
-            if t is not None:
-                t_key = t.hour * 60 + t.minute
-
-        date_keys.append("" if d_key is None else d_key)
-        time_keys.append("" if t_key is None else t_key)
-
-    # E) add two helper cols, sort, remove helpers
-    total_cols = len(headers)
-    h_date_idx0 = total_cols
-    h_time_idx0 = total_cols + 1
-
-    try:
-        spreadsheet_obj.batch_update({
-            "requests": [{
-                "insertDimension": {
-                    "range": {
-                        "sheetId": worksheet.id,
-                        "dimension": "COLUMNS",
-                        "startIndex": h_date_idx0,
-                        "endIndex": h_time_idx0 + 1
-                    },
-                    "inheritFromBefore": True
-                }
-            }]
-        })
-    except Exception as e:
-        print(f"[warn] insert helpers failed: {e}")
-
-    start_row_1b = data_start_idx0 + 1
-    end_row_1b   = data_start_idx0 + len(df)
-    a1_date = f"{rowcol_to_a1(start_row_1b, h_date_idx0 + 1)}:{rowcol_to_a1(end_row_1b, h_date_idx0 + 1)}"
-    a1_time = f"{rowcol_to_a1(start_row_1b, h_time_idx0 + 1)}:{rowcol_to_a1(end_row_1b, h_time_idx0 + 1)}"
-    worksheet.update(a1_date, [[v] for v in date_keys], value_input_option='USER_ENTERED')
-    worksheet.update(a1_time, [[v] for v in time_keys], value_input_option='USER_ENTERED')
-
-    # SORT (now safe: Date & Notes are unmerged)
-    try:
-        spreadsheet_obj.batch_update({
-            "requests": [{
-                "sortRange": {
-                    "range": {
-                        "sheetId": worksheet.id,
-                        "startRowIndex": data_start_idx0,
-                        "endRowIndex": data_start_idx0 + len(df),
-                        "startColumnIndex": 0,
-                        "endColumnIndex": h_time_idx0 + 1
-                    },
-                    "sortSpecs": [
-                        {"dimensionIndex": h_date_idx0, "sortOrder": "ASCENDING"},
-                        {"dimensionIndex": h_time_idx0, "sortOrder": "ASCENDING"},
-                    ]
-                }
-            }]
-        })
-    except Exception as e:
-        print(f"[warn] sortRange failed: {e}")
-
-    # delete helpers
-    try:
-        spreadsheet_obj.batch_update({
-            "requests": [{
-                "deleteDimension": {
-                    "range": {
-                        "sheetId": worksheet.id,
-                        "dimension": "COLUMNS",
-                        "startIndex": h_date_idx0,
-                        "endIndex": h_time_idx0 + 1
-                    }
-                }
-            }]
-        })
-    except Exception as e:
-        print(f"[warn] delete helpers failed: {e}")
-
-    # F) reload and re-merge equal-Date groups for Date and Notes
-    all_values = worksheet.get_all_values(value_render_option='UNFORMATTED_VALUE')
-    data_rows = all_values[data_start_idx0:]
-    norm_rows = [r[:len(headers)] + [""] * max(0, len(headers) - len(r)) for r in data_rows]
-    df = pd.DataFrame(norm_rows, columns=headers).replace('', np.nan)
-
+    # After filldown, the Date column is already populated in-sheet. Keep a local copy.
     date_series = df[date_col].astype(object)
+
+    # Identify contiguous identical-date groups (non-null)
     groups = []
-    start = None; prev = None
+    start = None
+    prev = None
     for i, val in enumerate(date_series):
         if pd.isna(val):
-            if start is not None and i - start >= 2: groups.append((start, i - 1))
-            start = None; prev = None; continue
+            if start is not None and i - start >= 2:
+                groups.append((start, i - 1))
+            start = None
+            prev = None
+            continue
         if prev is None or val != prev:
-            if start is not None and i - start >= 2: groups.append((start, i - 1))
+            if start is not None and i - start >= 2:
+                groups.append((start, i - 1))
             start = i
         prev = val
     if start is not None:
         i = len(date_series)
-        if i - start >= 2: groups.append((start, i - 1))
+        if i - start >= 2:
+            groups.append((start, i - 1))
 
-    def _col_idx(label):
-        for idx, h in enumerate(headers):
-            if str(h).strip().lower() == label.lower(): return idx
-        return None
+    # If there are no groups to merge, nothing else to do
+    if not groups:
+        print(f"No contiguous identical-date groups found to merge in '{worksheet.title}'.")
+        return
 
-    date_idx0 = _col_idx('date')
-    notes_idx0 = _col_idx('notes')
-    if date_idx0 is None or notes_idx0 is None:
-        print("Cannot locate Date/Notes for merging."); return
+    # Build merge requests for Google Sheets API (Date and Notes columns)
+    try:
+        ws = worksheet
+        sheet_id = ws.id
 
-    reqs = []
-    for r0, r1 in groups:
-        top_api = (r0 + 4) - 1
-        bot_api = (r1 + 4)
-        for cidx in (date_idx0, notes_idx0):
-            reqs.append({
+        # Map logical columns to 0-based column indices in the sheet
+        date_col_idx  = next((idx for idx, h in enumerate(headers) if str(h).strip().lower() == 'date'), None)
+        notes_col_idx = next((idx for idx, h in enumerate(headers) if str(h).strip().lower() == 'notes'), None)
+        if date_col_idx is None or notes_col_idx is None:
+            print(f"Skipping merges: couldn't locate 'Date' or 'Notes' indices.")
+            return
+
+        # Convert DF row indices to API row indices
+        # Data starts at sheet row 4 (1-based) -> API uses 0-based, exclusive end.
+        merges = []
+        for (r0_df, r1_df) in groups:
+            # Sheet rows (1-based):
+            top_1b = r0_df + 4
+            bot_1b = r1_df + 4
+            # API rows (0-based, end-exclusive):
+            top_api = top_1b - 1
+            bot_api = bot_1b          # end-exclusive, so no -1
+
+            # Date column merge
+            merges.append({
                 "mergeCells": {
                     "range": {
-                        "sheetId": worksheet.id,
+                        "sheetId": sheet_id,
                         "startRowIndex": top_api,
                         "endRowIndex": bot_api,
-                        "startColumnIndex": cidx,
-                        "endColumnIndex": cidx + 1
+                        "startColumnIndex": date_col_idx,
+                        "endColumnIndex": date_col_idx + 1
                     },
                     "mergeType": "MERGE_ALL"
                 }
             })
-    if reqs:
-        try:
-            spreadsheet_obj.batch_update({"requests": reqs})
-            print(f"Merged {len(groups)} date groups in '{worksheet.title}'.")
-        except Exception as e:
-            print(f"[warn] merge requests failed: {e}")
+            # Notes column merge
+            merges.append({
+                "mergeCells": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": top_api,
+                        "endRowIndex": bot_api,
+                        "startColumnIndex": notes_col_idx,
+                        "endColumnIndex": notes_col_idx + 1
+                    },
+                    "mergeType": "MERGE_ALL"
+                }
+            })
+
+        if merges:
+            spreadsheet_obj.batch_update({"requests": merges})
+            print(f"Merged {len(groups)} date groups (and corresponding Notes cells) in '{worksheet.title}'.")
+    except Exception as e:
+        print(f"[warn] Failed to send merge requests: {e}")
 
 def Verbose_Sheet(program, wks_SOG, week_number):
     specific_week = True
@@ -1106,45 +1011,3 @@ def filldown_dates_in_sheet(worksheet, *, date_header_name: str = "Date") -> Non
     values = [[("" if (v is np.nan or v is None or str(v) == "nan") else str(v))] for v in col.tolist()]
     if values:
         worksheet.update(rng, values, value_input_option='USER_ENTERED')
-
-def unmerge_columns_in_data(worksheet, header_names=("Date", "Notes")) -> None:
-    """
-    Unmerge vertical merges for the specified header columns across the data region.
-    Headers on row 3 (1-based). Data starts on row 4.
-    """
-    all_vals = worksheet.get_all_values(value_render_option='UNFORMATTED_VALUE')
-    if not all_vals or len(all_vals) <= 2:
-        return
-
-    headers = list(all_vals[2])
-    while headers and headers[-1] == "":
-        headers.pop()
-    if not headers:
-        return
-
-    # map names -> indices
-    wanted_idx = []
-    for name in header_names:
-        for i, h in enumerate(headers):
-            if str(h).strip().lower() == name.lower():
-                wanted_idx.append(i)
-                break
-
-    if not wanted_idx:
-        return
-
-    reqs = []
-    for idx in wanted_idx:
-        reqs.append({
-            "unmergeCells": {
-                "range": {
-                    "sheetId": worksheet.id,
-                    "startRowIndex": 3,                # data start (0-based)
-                    "endRowIndex": len(all_vals),      # end-exclusive
-                    "startColumnIndex": idx,
-                    "endColumnIndex": idx + 1
-                }
-            }
-        })
-    if reqs:
-        worksheet.spreadsheet.batch_update({"requests": reqs})

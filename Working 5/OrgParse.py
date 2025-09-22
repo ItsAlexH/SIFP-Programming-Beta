@@ -129,7 +129,7 @@ async def post_events(bot, wks, week_number, IDCol, program, calendar, p):
             if (Event_IDs[j] == '' or Event_IDs[j] is None):
                 process = "Creation"
                 event_id = str(uuid.uuid4())
-                wks.update_cell(j+4, IDCol+2, event_id) 
+                wks.update_cell(j+4, IDCol+2, event_id)
                 event = {
                     "title": Titles[j], "date": Dates[j].isoformat(), 
                     "start_time": Start_Times[j].isoformat(), "end_time": End_Times[j].isoformat(),

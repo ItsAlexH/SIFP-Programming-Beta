@@ -31,14 +31,7 @@ import json
 
 from OrgParse import conversion_excel_date, parse_times, get_color, post_events, get_event_by_search_query, update_events_by_id, Reorganize_Sheet, Verbose_Sheet, update_events_submitted, get_event_submitted
 Missing_color = 1
-from FSI_Programming import Import_Prog, Reorganize_Sheet_Import
-
-# TODO:
-# 1. Import_Prog not importing Sunday events (ONLY IF THE ONGOING CHALLENGES MISSING)
-# 2. Weekly Events
-# 3. Import_Prog using diff Organize for now (in FSI_Programming) because the other does not delete rows, but DOES the rest of the import stuff right.
-# 4. Organize (in OrgParse) not deleting extra rows.
-# 5. Merging it all.
+from FSI_Programming import Import_Prog
 
 # =======================
 # External function stubs
@@ -96,9 +89,9 @@ async def Deploy_SOG(bot, program: str, week_number: int) -> str:
     Leaders_mask = [val == '' for val in Leaders]
 
     if(program == "Online"):
-        IDCol = 10
+        IDCol = 11
     else: 
-        IDCol = 9
+        IDCol = 10
     
     await post_events(bot, wks.get_worksheet(week_number+2), week_number, IDCol, program, calendar, p = (Titles, Leaders, Leaders_mask, Dates, 
                                      Start_Times, End_Times, Locations, Locations_mask, Descriptions, Descriptions_mask, Categories, Event_IDs, Colors))
@@ -118,7 +111,7 @@ def Import_Programming(program: str, week_number: int, import_type: int) -> str:
         wks_SOG = gc.open(os.getenv("SIFP_SOG_TOKEN"))
 
     Import_Prog(program, wks_PROG, wks_SOG, week_number, import_type)
-    Reorganize_Sheet_Import(program, wks_SOG, week_number)
+    Reorganize_Sheet(program, wks_SOG, week_number)
     if(import_type == 0):
         label = "Programming"
     elif(import_type == 1):
@@ -147,8 +140,7 @@ def Submit_Event(program: str, payload: dict) -> str:
         hosts_string,
         payload.get('description'), 
         payload.get('halps'),
-        payload.get('location'),
-        payload.get('recurrance')
+        payload.get('location')
     ]
     wks_prog.append_row(row_data)
     return f"Event '{payload.get('title','(untitled)')}' submitted for {program}."
@@ -384,14 +376,16 @@ class SIRA_BOT(commands.Cog):
                 await channel.send("❌ Cancelled.")
                 return None
             
+            # The 'isdigit' check is performed on the string content before parsing
             if parse:
                 try:
                     parsed_content = parse(content)
-                    content = parsed_content
+                    content = parsed_content # Update content to the parsed value
                 except ValueError as e:
                     await channel.send(f"⚠️ Invalid format: {e}. Please try again or type `cancel`.")
                     return await ask(prompt, validate, parse, timeout)
             
+            # Now, validate the content, which might be a string or an int
             if validate and not validate(content):
                 await channel.send("⚠️ Invalid choice. Please try again or type `cancel`.")
                 return await ask(prompt, validate, parse, timeout)
@@ -495,7 +489,7 @@ class SIRA_BOT(commands.Cog):
                 await channel.send(f"📥 Importing **{label}** for **{program}**, Week **{week}**...")
                 result = Import_Programming(program, week, typ)
             else:
-                typ = 0
+                typ = 0 # SIFP onyl have cocurricular
                 label = "Programming"
                 await channel.send(f"📥 Importing **{label}** for **{program}**, Week **{week}**...")
                 result = Import_Programming(program, week, typ)
@@ -521,13 +515,12 @@ class SIRA_BOT(commands.Cog):
             if halps is None: return
             location = await ask("Enter **Location**:")
             if location is None: return
-            recurrence = await ask("Is this event recurring? (No, Weekly, Biweekly)")
 
             payload = {
                 "date": date.strftime('%m/%d/%Y'), "start_time": start_t.strftime("%I:%M %p"),
                 "end_time": end_t.strftime("%I:%M %p"), "title": title,
                 "description": description, "hosts": [h.strip() for h in hosts.split(",") if h.strip()],
-                "halps": halps, "location": location, "recurrance": recurrence
+                "halps": halps, "location": location,
             }
 
             await channel.send(f"📝 Submitting event **{title}** for **{program}**...")
@@ -567,20 +560,7 @@ class SIRA_BOT(commands.Cog):
                 if len(events_to_edit) > 1:
                     message_content = "Which one do you want to edit?\n\n"
                     for i, event in enumerate(events_to_edit):
-                        date_str = event.get('Event Date')
-                        start_time_str = event.get('Start Time')
-                        
-                        if date_str and start_time_str:
-                            try:
-                                combined_datetime_str = f"{date_str} {start_time_str}"
-                                dt_obj = datetime.datetime.strptime(combined_datetime_str, "%m/%d/%Y %I:%M %p")
-                                formatted_display = dt_obj.strftime("%m/%d/%y @ %I:%M %p").lstrip("0").replace(" 0", " ")
-                            except ValueError:
-                                formatted_display = f"{date_str} @ {start_time_str}"
-                        else:
-                            formatted_display = "Date/Time not available"
-
-                        message_content += f"**({i+1})** `{event.get('Event Title')}` on `{formatted_display}`\n"
+                        message_content += f"**({i+1})** `{event.get('Event Title')}` on `{event.get('Event Date')}`\n"
                     
                     choice = await ask(message_content, validate=lambda x: str(x).isdigit() and 1 <= int(x) <= len(events_to_edit), parse=int)
                     if choice:
@@ -659,14 +639,7 @@ class SIRA_BOT(commands.Cog):
                         return
                     message_content = "Which one do you want to edit?\n\n"
                     for i, event in enumerate(event_to_edit):
-                        try:
-                            date_obj = datetime.datetime.fromisoformat(event['date'])
-                            start_time_obj = datetime.datetime.fromisoformat(event['start_time'])
-                            combined_dt = datetime.datetime.combine(date_obj.date(), start_time_obj.time())
-                            formatted_display = combined_dt.strftime("%m/%d/%y @ %I:%M %p").lstrip("0").replace(" 0", " ")
-                        except (ValueError, TypeError):
-                            formatted_display = f"{event.get('date')} @ {event.get('start_time')}"
-                        message_content += f"**({i+1})** `{event.get('title')}` on `{formatted_display}`\n"
+                        message_content += f"**({i+1})** `{event.get('title')}` on `{event.get('date')}`\n"
                     
                     choice = await ask(message_content, validate=lambda x: str(x).isdigit() and 1 <= int(x) <= len(event_to_edit), parse=int)
                     if choice:
@@ -684,8 +657,7 @@ class SIRA_BOT(commands.Cog):
                     "Which fields would you like to edit? Type `all` or a comma-separated list of numbers/names:\n"
                     "(1) title\n(2) date\n(3) start time\n(4) end time\n"
                     "(5) leaders\n(6) location\n(7) category\n"
-                    "(8) description\n(9) recording\n(10) status\n"
-                    "(11) duration\n"
+                    "(8) description\n(9) recording\n(10) status"
                 )
                 if fields_to_edit_raw is None: return
 
@@ -695,7 +667,6 @@ class SIRA_BOT(commands.Cog):
                     "5": "leaders", "leaders": "leaders", "6": "location", "location": "location",
                     "7": "category", "category": "category", "8": "description", "description": "description",
                     "9": "recording", "recording": "recording", "10": "status", "status": "status",
-                    "11": "duration", "duration": "duration",
                     "all": "all"
                 }
 
@@ -719,45 +690,9 @@ class SIRA_BOT(commands.Cog):
                     if field == "date":
                         new_value = await ask(f"{prompt} (e.g., `09/30/25`):", parse=parse_date_mmddyy)
                         if new_value: update_args[field] = new_value
-                    elif field == "start_time":
+                    elif field in ["start_time", "end_time"]:
                         new_value = await ask(f"{prompt} (e.g., `9:00 AM`):", parse=parse_time_ampm)
-                        if new_value:
-                            update_args[field] = new_value
-                            duration_str = await ask("Enter new **duration** in minutes (e.g., `60`):", parse=int)
-                            if duration_str is not None:
-                                duration = datetime.timedelta(minutes=duration_str)
-                                event_date_obj = datetime.datetime.fromisoformat(event_to_edit["date"]).date()
-                                start_datetime = datetime.datetime.combine(event_date_obj, new_value)
-                                end_datetime = start_datetime + duration
-                                update_args["end_time"] = end_datetime.time()
-                    elif field == "end_time":
-                        new_value = await ask(f"{prompt} (e.g., `10:00 AM`):", parse=parse_time_ampm)
-                        if new_value:
-                            update_args[field] = new_value
-                            duration_str = await ask("Enter new **duration** in minutes (e.g., `60`):", parse=int)
-                            if duration_str is not None:
-                                duration = datetime.timedelta(minutes=duration_str)
-                                event_date_obj = datetime.datetime.fromisoformat(event_to_edit["date"]).date()
-                                end_datetime = datetime.datetime.combine(event_date_obj, new_value)
-                                start_datetime = end_datetime - duration
-                                update_args["start_time"] = start_datetime.time()
-                    elif field == "duration":
-                        new_value = await ask(f"{prompt} (in minutes, e.g., `60`):", parse=int)
-                        if new_value is not None:
-                            duration = datetime.timedelta(minutes=new_value)
-                            reference_time_str = await ask("Adjust based on **start time** or **end time**? (`start`/`end`)", validate=lambda x: x.lower() in ("start", "end"))
-                            if reference_time_str:
-                                event_date_obj = datetime.datetime.fromisoformat(event_to_edit["date"]).date()
-                                if reference_time_str.lower() == "start":
-                                    start_time = datetime.datetime.fromisoformat(event_to_edit["start_time"]).time()
-                                    start_datetime = datetime.datetime.combine(event_date_obj, start_time)
-                                    end_datetime = start_datetime + duration
-                                    update_args["end_time"] = end_datetime.time()
-                                else:
-                                    end_time = datetime.datetime.fromisoformat(event_to_edit["end_time"]).time()
-                                    end_datetime = datetime.datetime.combine(event_date_obj, end_time)
-                                    start_datetime = end_datetime - duration
-                                    update_args["start_time"] = start_datetime.time()
+                        if new_value: update_args[field] = new_value
                     else:
                         new_value = await ask(prompt)
                         if new_value: update_args[field] = new_value

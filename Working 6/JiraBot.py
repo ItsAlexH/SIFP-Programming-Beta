@@ -147,8 +147,7 @@ def Submit_Event(program: str, payload: dict) -> str:
         hosts_string,
         payload.get('description'), 
         payload.get('halps'),
-        payload.get('location'),
-        payload.get('recurrance')
+        payload.get('location')
     ]
     wks_prog.append_row(row_data)
     return f"Event '{payload.get('title','(untitled)')}' submitted for {program}."
@@ -521,13 +520,12 @@ class SIRA_BOT(commands.Cog):
             if halps is None: return
             location = await ask("Enter **Location**:")
             if location is None: return
-            recurrence = await ask("Is this event recurring? (No, Weekly, Biweekly)")
 
             payload = {
                 "date": date.strftime('%m/%d/%Y'), "start_time": start_t.strftime("%I:%M %p"),
                 "end_time": end_t.strftime("%I:%M %p"), "title": title,
                 "description": description, "hosts": [h.strip() for h in hosts.split(",") if h.strip()],
-                "halps": halps, "location": location, "recurrance": recurrence
+                "halps": halps, "location": location,
             }
 
             await channel.send(f"📝 Submitting event **{title}** for **{program}**...")
