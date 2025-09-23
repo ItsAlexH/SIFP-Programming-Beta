@@ -134,6 +134,9 @@ async def Deploy_SOG(bot, program: str, week_number: int) -> str:
     # Update the title of the new worksheet to match the original
     new_wks.update_title(source_wks.title)
 
+    # Delete column K
+    new_wks.delete_cols(11)
+
     # Move the new worksheet to the first position after the welcome sheet
     # The new index is 1, as the welcome sheet is at index 0.
     request = {
@@ -853,6 +856,9 @@ class SIRA_BOT(commands.Cog):
 
                 # Update the title of the new worksheet to match the original
                 new_wks.update_title(source_wks.title)
+
+                # Delete column K
+                new_wks.delete_cols(11)
 
                 # Move the new worksheet to the first position after the welcome sheet
                 # The new index is 1, as the welcome sheet is at index 0.
