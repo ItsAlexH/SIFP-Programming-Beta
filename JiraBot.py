@@ -135,7 +135,21 @@ async def Deploy_SOG(bot, program: str, week_number: int) -> str:
     new_wks.update_title(source_wks.title)
 
     # Delete column K
-    new_wks.delete_cols(11)
+    request = {
+        "requests": [
+            {
+                "deleteDimension": {
+                    "range": {
+                        'sheetId': new_sheet_info['sheetId'],
+                        "dimension": "COLUMNS",
+                        "startIndex": 10,
+                        "endIndex": 11
+                    }
+                }
+            }
+        ]
+    }
+    destination_spreadsheet.batch_update(request)
 
     # Move the new worksheet to the first position after the welcome sheet
     # The new index is 1, as the welcome sheet is at index 0.
@@ -858,7 +872,21 @@ class SIRA_BOT(commands.Cog):
                 new_wks.update_title(source_wks.title)
 
                 # Delete column K
-                new_wks.delete_cols(11)
+                request = {
+                    "requests": [
+                        {
+                            "deleteDimension": {
+                                "range": {
+                                    'sheetId': new_sheet_info['sheetId'],
+                                    "dimension": "COLUMNS",
+                                    "startIndex": 10,
+                                    "endIndex": 11
+                                }
+                            }
+                        }
+                    ]
+                }
+                destination_spreadsheet.batch_update(request)
 
                 # Move the new worksheet to the first position after the welcome sheet
                 # The new index is 1, as the welcome sheet is at index 0.
