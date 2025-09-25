@@ -4,18 +4,12 @@ import datetime
 import gspread
 from dotenv import load_dotenv
 import os
-import time
+import time # Import the time module
 import sys
-import warnings
 
 # --- Import custom functions from OrgParse and OrgProg ---
-try:
-    from OrgParse import conversion_excel_date as excel_date_converter
-    from OrgParse import parse_times, get_color, clear_dates, post_events
-    from OrgProg import prog_weeks, get_programming, sog_days, clean_headers
-except ImportError as e:
-    print(f"Error importing custom modules: {e}")
-    sys.exit(1)
+from OrgParse import conversion_excel_date, parse_times, get_color, clear_dates, post_events
+from OrgProg import prog_weeks, get_programming, sog_days, clean_headers
 
 # --- Configuration & Setup ---
 load_dotenv()
@@ -46,38 +40,6 @@ def conversion_excel_date(f):
 
     return (temp + full_days_td + seconds_td).date()
 
-def parse_time_to_minutes(time_str):
-    """
-    Parses a time string and returns the number of minutes since midnight.
-    Handles 'HH:MM AM/PM' and 'HH:MM' formats.
-    """
-    if not isinstance(time_str, str) or not time_str.strip():
-        return None
-    time_str = time_str.strip().upper().replace('.', '')
-    try:
-        # Handle HH:MM PM/AM format
-        dt_obj = datetime.datetime.strptime(time_str, '%I:%M %p')
-    except ValueError:
-        try:
-            # Handle HH:MM military time format
-            dt_obj = datetime.datetime.strptime(time_str, '%H:%M')
-        except ValueError:
-            return None
-    
-    return dt_obj.hour * 60 + dt_obj.minute
-
-def excel_time_to_minutes(excel_time):
-    """
-    Converts an Excel time serial number to minutes since midnight.
-    """
-    if not isinstance(excel_time, (int, float)):
-        try:
-            excel_time = float(excel_time)
-        except (ValueError, TypeError):
-            return None
-    
-    return int(round(excel_time * 24 * 60))
-
 # --- Main Script Logic Encapsulated in a Function ---
 def run_script_logic(week_num):
     # Google Sheets setup
@@ -90,23 +52,23 @@ def run_script_logic(week_num):
         for i in range(retries):
             try:
                 wks_submit = gc.open(os.getenv("SUBMITTED_EVENTS_TOKEN"))
-                break
+                break # Success, exit the retry loop
             except gspread.exceptions.APIError as e:
                 if "Internal Error" in str(e) and i < retries - 1:
                     print(f"Temporary Google Sheets API error [500]: {e}. Retrying in {delay} seconds...")
                     time.sleep(delay)
                 else:
-                    raise
+                    raise # Re-raise if not a 500 error or if out of retries
         else:
             print("Failed to connect to Google Sheets after multiple retries. Exiting.")
-            return
+            return # Exit the function on failure
             
     except gspread.exceptions.APIError as e:
         print(f"Error connecting to Google Sheets: {e}")
         print("Please ensure 'service_account.json' is valid and has access to the spreadsheet.")
-        return
+        return # Exit the function on error
 
-    # --- Process Submission Data (Worksheet 0) ---
+    # --- Process Submission Data (Worksheet) ---
     print("--- Processing Submission Data ---")
     try:
         submit_raw_values = wks_submit.get_worksheet(0).get_all_values(value_render_option='UNFORMATTED_VALUE')
@@ -122,29 +84,36 @@ def run_script_logic(week_num):
         End_Times = prog_data.get('End Time', pd.Series(dtype=str)).tolist()
         Locations = prog_data.get('Location', pd.Series(dtype=str)).tolist()
 
-        # Parse Dates
         for i in range(len(Dates)):
+            # Check if the date is already a datetime object (from a previous run or manual entry)
             if isinstance(Dates[i], datetime.date):
                 continue
+
             if isinstance(Dates[i], str) and Dates[i].strip():
+                # First, try to parse the 'YYYY-MM-DD' format
                 try:
                     Dates[i] = datetime.datetime.strptime(Dates[i], '%Y-%m-%d').date()
                     continue
                 except ValueError:
-                    pass
+                    pass  # If this fails, try the next format
+
+                # Next, try the 'MM/DD/YYYY' format as a fallback
                 try:
                     Dates[i] = datetime.datetime.strptime(Dates[i], '%m/%d/%Y').date()
                     continue
                 except ValueError:
-                    pass
+                    pass  # If this fails, try the numerical format
+
+                # Finally, try to handle it as an Excel numerical date
+                try:
+                    Dates[i] = float(Dates[i])
+                    Dates[i] = conversion_excel_date(Dates[i])
+                except (ValueError, TypeError):
+                    print(f"Warning: Skipping invalid date value at index {i}: '{Dates[i]}'")
+                    Dates[i] = None
+            
             elif isinstance(Dates[i], (int, float)):
                 Dates[i] = conversion_excel_date(Dates[i])
-            else:
-                Dates[i] = None
-
-        # Parse Times
-        parsed_start_times = [parse_time_to_minutes(t) for t in Start_Times]
-        parsed_end_times = [parse_time_to_minutes(t) for t in End_Times]
 
     except gspread.exceptions.APIError as e:
         print(f"Error reading submission worksheet (Worksheet 0): {e}")
@@ -244,18 +213,17 @@ def run_script_logic(week_num):
         print(f"An unexpected error occurred during programming visual data processing: {e}")
         return
 
-    # Parse Calendar_Times
+
     Calendar_Times = prog_visual[prog_visual_cleaned_headers[0]].tolist()
-    # Convert calendar times to a consistent numerical format
-    parsed_calendar_times = [excel_time_to_minutes(t) if isinstance(t, (int, float)) else parse_time_to_minutes(t) for t in Calendar_Times]
 
     print("\n--- Updating Google Sheet with Events ---")
+    import warnings
     warnings.filterwarnings("ignore", category=DeprecationWarning, module="gspread")
 
     for i, event_date in enumerate(Dates):
         event_title = Titles[i].strip()
-        start_time_minutes = parsed_start_times[i]
-        end_time_minutes = parsed_end_times[i]
+        Start_Time = Start_Times[i]
+        End_Time = End_Times[i]
 
         col_idx_0_based = Mask[i]
 
@@ -266,14 +234,18 @@ def run_script_logic(week_num):
                 print(f"Skipping event '{event_title}' (Date: {event_date}): Column '{event_col_name}' not found in visual DataFrame.")
                 continue
 
+            ## Assign event_title to location for ease.
+            event_title = Locations[i].strip()
+
             ii_s = -1
             ii_e = -1
-            if start_time_minutes is not None and end_time_minutes is not None:
-                # Find the index of the start and end times
-                if start_time_minutes in parsed_calendar_times:
-                    ii_s = parsed_calendar_times.index(start_time_minutes)
-                if end_time_minutes in parsed_calendar_times:
-                    ii_e = parsed_calendar_times.index(end_time_minutes)
+
+            if Calendar_Times:
+                for j, cal_time_val in enumerate(Calendar_Times):
+                    if np.isclose(cal_time_val, Start_Time):
+                        ii_s = j
+                    if np.isclose(cal_time_val, End_Time):
+                        ii_e = j
 
             if ii_s != -1 and ii_e != -1 and ii_s <= ii_e:
                 gspread_start_row = ii_s + 2
@@ -320,7 +292,7 @@ def run_script_logic(week_num):
                 except Exception as e:
                     print(f"Failed to update cells for event '{event_title}' in range '{range_to_update}': {e}")
             else:
-                print(f"Skipping update for event '{event_title}' (Date: {event_date}): Could not find valid start/end times in Calendar_Times or invalid range ({ii_s}-{ii_e}).")
+                print(f"Skipping update for event '{event_title}' (Date: {event_date}): Could not find valid start/end times ({Start_Time}-{End_Time}) in Calendar_Times or invalid range ({ii_s}-{ii_e}).")
         else:
             print(f"Skipping event '{event_title}' (Date: {event_date}): Event date not found in visual sheet headers or Mask[i] is 0/invalid index ({col_idx_0_based}).")
 
@@ -343,4 +315,4 @@ if __name__ == "__main__":
         print(f"\n--- Starting new run at {datetime.datetime.now()} for Week {initial_week} ---")
         run_script_logic(initial_week)
         print(f"--- Finished run at {datetime.datetime.now()}. Sleeping for 60 minutes... ---")
-        time.sleep(3600)
+        time.sleep(3600) # Sleep for 60 minutes (3600 seconds)
