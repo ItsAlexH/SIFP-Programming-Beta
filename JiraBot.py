@@ -130,7 +130,6 @@ async def Deploy_SOG(bot, program: str, week_number: int) -> str:
         # Delete the worksheet at index 1 (the 2nd sheet), since we don't want to touch the welcome sheet
         destination_spreadsheet.del_worksheet(worksheets[1])
 
-
     # Update the title of the new worksheet to match the original
     new_wks.update_title(source_wks.title)
 

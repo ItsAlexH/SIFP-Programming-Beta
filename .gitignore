@@ -7,3 +7,12 @@ token.pickle
 discord.log
 events.json
 _pycache_
+Visual-Programming/.env
+Visual-Programming/authorized_user.json
+Visual-Programming/client_secrets.json
+Visual-Programming/credentials.json
+Visual-Programming/service_account.json
+Visual-Programming/token.pickle
+Visual-Programming/discord.log
+Visual-Programming/events.json
+Visual-Programming/_pycache_
