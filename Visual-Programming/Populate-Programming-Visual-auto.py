@@ -68,7 +68,7 @@ def run_script_logic(week_num):
         print("Please ensure 'service_account.json' is valid and has access to the spreadsheet.")
         return # Exit the function on error
 
-    # --- Process Submission Data (Worksheet 0) ---
+    # --- Process Submission Data (Worksheet) ---
     print("--- Processing Submission Data ---")
     try:
         submit_raw_values = wks_submit.get_worksheet(0).get_all_values(value_render_option='UNFORMATTED_VALUE')
@@ -83,20 +83,37 @@ def run_script_logic(week_num):
         Start_Times = prog_data.get('Start Time', pd.Series(dtype=str)).tolist()
         End_Times = prog_data.get('End Time', pd.Series(dtype=str)).tolist()
         Locations = prog_data.get('Location', pd.Series(dtype=str)).tolist()
-        
+
         for i in range(len(Dates)):
-            if isinstance(Dates[i], (int, float)):
-                Dates[i] = conversion_excel_date(Dates[i])
-            elif isinstance(Dates[i], str) and Dates[i].strip():
+            # Check if the date is already a datetime object (from a previous run or manual entry)
+            if isinstance(Dates[i], datetime.date):
+                continue
+
+            if isinstance(Dates[i], str) and Dates[i].strip():
+                # First, try to parse the 'YYYY-MM-DD' format
+                try:
+                    Dates[i] = datetime.datetime.strptime(Dates[i], '%Y-%m-%d').date()
+                    continue
+                except ValueError:
+                    pass  # If this fails, try the next format
+
+                # Next, try the 'MM/DD/YYYY' format as a fallback
                 try:
                     Dates[i] = datetime.datetime.strptime(Dates[i], '%m/%d/%Y').date()
+                    continue
                 except ValueError:
-                    try:
-                        Dates[i] = float(Dates[i])
-                        Dates[i] = conversion_excel_date(Dates[i])
-                    except (ValueError, TypeError):
-                        print(f"Warning: Skipping invalid date value at index {i}: '{Dates[i]}'")
-                        Dates[i] = None
+                    pass  # If this fails, try the numerical format
+
+                # Finally, try to handle it as an Excel numerical date
+                try:
+                    Dates[i] = float(Dates[i])
+                    Dates[i] = conversion_excel_date(Dates[i])
+                except (ValueError, TypeError):
+                    print(f"Warning: Skipping invalid date value at index {i}: '{Dates[i]}'")
+                    Dates[i] = None
+            
+            elif isinstance(Dates[i], (int, float)):
+                Dates[i] = conversion_excel_date(Dates[i])
 
     except gspread.exceptions.APIError as e:
         print(f"Error reading submission worksheet (Worksheet 0): {e}")
