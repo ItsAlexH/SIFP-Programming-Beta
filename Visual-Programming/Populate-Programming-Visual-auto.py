@@ -343,4 +343,4 @@ if __name__ == "__main__":
         print(f"\n--- Starting new run at {datetime.datetime.now()} for Week {initial_week} ---")
         run_script_logic(initial_week)
         print(f"--- Finished run at {datetime.datetime.now()}. Sleeping for 60 minutes... ---")
-        time.sleep(3600)
+        time.sleep(360)
